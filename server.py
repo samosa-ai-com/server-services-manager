@@ -141,7 +141,16 @@ _health_monitor = None  # initialized after pm.load_config()
 def _get_active_notifiers() -> list:
     return list(_health_notifiers)
 
-_password_hash = generate_password_hash(os.getenv('PASSWORD', 'admin'))
+_password_env = os.getenv('PASSWORD')
+_custom_warning = (os.getenv('DEFAULT_PASSWORD_WARNING') or '').strip()
+if not _password_env:
+    logger.warning(
+        _custom_warning
+        or "SECURITY WARNING: PASSWORD is not set — using the default 'admin'. "
+        "Set PASSWORD in your environment or .env before exposing this app."
+    )
+_password_hash = generate_password_hash(_password_env or 'admin')
+del _password_env, _custom_warning
 
 @app.before_request
 def require_login():

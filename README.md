@@ -167,6 +167,7 @@ journalctl --user -u server-services-manager -f
 | `CORS_ORIGIN` | `*` | Allowed CORS origin |
 | `CODE_SERVER_HOST` | `127.0.0.1` | Host the `/code` page uses to reach code-server |
 | `CODE_SERVER_PORT` | `8600` | Port the `/code` page uses to reach code-server |
+| `DEFAULT_PASSWORD_WARNING` | (built-in) | Override the startup warning text when `PASSWORD` is unset |
 
 ### Services (`config.yaml`)
 
