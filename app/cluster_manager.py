@@ -68,10 +68,16 @@ def get_cluster_config(cfg_data: Dict[str, Any]) -> Dict[str, Any]:
     check every key. ``enabled`` defaults to False.
     """
     block = cfg_data.get("cluster") or {}
+    try:
+        _port = int(str(block.get("port", 8881)).strip())
+    except (TypeError, ValueError, AttributeError):
+        _port = 8881
+    if not (1 <= _port <= 65535):
+        _port = 8881
     return {
         "enabled": bool(block.get("enabled", False)),
         "secret": str(block.get("secret", "") or ""),
-        "port": int(block.get("port", 8881) or 8881),
+        "port": _port,
         "advertise": str(block.get("advertise", "") or ""),
     }
 
@@ -106,13 +112,16 @@ def build_cluster_block(
     ``payload`` comes from ``PUT /api/cluster/config``; ``existing``
     is the current ``cluster:`` block from config.yaml (or {}).
 
-    - ``secret``: absent/empty keeps the existing secret, unless
-      ``clear_secret`` is truthy (which wipes it). A new secret
-      must be at least 8 characters.
+    - ``secret``: absent/blank keeps the existing secret, unless
+      ``clear_secret`` is truthy (which wipes it, winning over a
+      simultaneously supplied secret). A new secret is stripped
+      (matching the add-peer form, which trims on input) and must
+      be at least 8 characters; all-whitespace is rejected.
     - ``enabled``: boolean, defaults to the existing value.
     - ``port``: integer 1-65535, defaults to the existing value.
     - ``advertise``: empty string or a hostname/IP (same charset
       rules as peer hosts).
+    Unknown keys already present in ``existing`` are preserved.
 
     Raises :class:`ClusterError` on invalid input. Never logs or
     returns the secret itself — callers decide what to expose.
@@ -128,12 +137,15 @@ def build_cluster_block(
         _base_port = _raw_port
     elif isinstance(_raw_port, str) and _raw_port.strip().isdigit():
         _base_port = int(_raw_port.strip())
-    out: Dict[str, Any] = {
+    # Preserve any unknown keys so a save never silently drops
+    # config it doesn't understand.
+    out: Dict[str, Any] = dict(base)
+    out.update({
         "enabled": bool(base.get("enabled", False)),
         "secret": str(base.get("secret", "") or ""),
         "port": _base_port,
         "advertise": str(base.get("advertise", "") or ""),
-    }
+    })
 
     if "enabled" in (payload or {}):
         out["enabled"] = bool(payload.get("enabled"))
@@ -164,16 +176,21 @@ def build_cluster_block(
     if bool((payload or {}).get("clear_secret")):
         out["secret"] = ""
     elif "secret" in (payload or {}):
-        new_secret = str(payload.get("secret") or "")
-        # Note: not stripped — secrets may legitimately contain
-        # leading/trailing spaces; the peer form trims on input.
-        if new_secret:
-            if len(new_secret) < _MIN_CLUSTER_SECRET_LEN:
+        _raw_secret = str(payload.get("secret") or "")
+        if _raw_secret and not _raw_secret.strip():
+            raise ClusterError("weak_secret", "secret must not be blank")
+        _new_secret = _raw_secret.strip()
+        # Note: stripped to match the add-peer form (which trims on
+        # input) — otherwise a pasted trailing space would
+        # permanently break verification, since verify strips only
+        # the provided side.
+        if _new_secret:
+            if len(_new_secret) < _MIN_CLUSTER_SECRET_LEN:
                 raise ClusterError(
                     "weak_secret",
                     f"secret must be at least {_MIN_CLUSTER_SECRET_LEN} characters",
                 )
-            out["secret"] = new_secret
+            out["secret"] = _new_secret
 
     return out
 

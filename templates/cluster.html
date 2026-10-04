@@ -261,22 +261,22 @@
                     </div>
                 </div>
                 <div>
-                    <label class="text-xs text-[var(--text-secondary)] block mb-1">Port this node listens on</label>
+                    <label class="text-xs text-[var(--text-secondary)] block mb-1">Port peers use to reach this node (informational — the app itself always listens on 8881)</label>
                     <input id="cfg-port" class="text-input" type="number" min="1" max="65535" value="8881">
                 </div>
                 <div>
-                    <label class="text-xs text-[var(--text-secondary)] block mb-1">Advertise address (optional)</label>
+                    <label class="text-xs text-[var(--text-secondary)] block mb-1">Advertise address (optional, shown to peers)</label>
                     <input id="cfg-advertise" class="text-input" placeholder="auto-detect">
                 </div>
                 <label class="flex items-center gap-2 text-xs text-[var(--text-secondary)] sm:col-span-2">
                     <input id="cfg-enabled" type="checkbox" class="w-4 h-4">
-                    Enable mDNS advertise/browse <span class="text-[var(--text-muted)]">(needs the optional <code class="font-mono">zeroconf</code> package; manual peers work without it)</span>
+                    Enable flag for future mDNS use <span class="text-[var(--text-muted)]">(no effect today — manual peers work without it; needs the optional <code class="font-mono">zeroconf</code> package when implemented)</span>
                 </label>
             </div>
             <div id="cfg-error" class="text-xs text-[var(--accent-red)] hidden mt-2"></div>
             <div class="flex flex-wrap justify-end gap-2 mt-3">
                 <button class="btn btn-danger" id="cfg-clear" onclick="clearClusterSecret()" title="Remove the shared secret from this machine (peers will reject its calls)">
-                    <i data-lucide="key-x" class="w-3.5 h-3.5"></i> Remove secret
+                    <i data-lucide="trash-2" class="w-3.5 h-3.5"></i> Remove secret
                 </button>
                 <button class="btn btn-primary" id="cfg-save" onclick="saveClusterConfig(false)" title="Save these cluster settings">
                     <i data-lucide="save" class="w-3.5 h-3.5"></i> Save settings
@@ -501,10 +501,7 @@
         }
 
         function loadLocal() {
-            // include_secret=true is used only here so the add-peer
-            // form can pre-fill; the default /api/cluster/info omits
-            // the raw secret and returns has_secret instead.
-            api('/api/cluster/info?include_secret=true').then(({ status, data }) => {
+            api('/api/cluster/info').then(({ status, data }) => {
                 if (status >= 400) {
                     document.getElementById('local-info').textContent = 'Failed to load local info';
                     return;
@@ -534,7 +531,7 @@
             if (localInfo.has_secret) {
                 sec.innerHTML = '<span class="badge badge-green"><i data-lucide="key-round" class="w-3 h-3"></i> shared secret set</span>';
             } else {
-                sec.innerHTML = '<span class="badge badge-yellow"><i data-lucide="triangle-alert" class="w-3 h-3"></i> no shared secret — set cluster.secret in config.yaml and restart</span>';
+                sec.innerHTML = '<span class="badge badge-yellow"><i data-lucide="triangle-alert" class="w-3 h-3"></i> no shared secret — set it in This machine\'s cluster settings below (applies immediately)</span>';
             }
             lucide.createIcons();
             renderChecklist();
@@ -629,7 +626,7 @@
                     saveBtn.disabled = false;
                     clearBtn.disabled = false;
                     if (status === 200) {
-                        toast(clear ? 'Shared secret removed' : 'Cluster settings saved — active now, no restart needed', 'success');
+                        toast(clear ? 'Shared secret removed' : 'Cluster settings saved (secret applies immediately)', 'success');
                         loadClusterConfig();
                         loadLocal();
                     } else {
@@ -691,6 +688,21 @@
             badge.textContent = 'checking secret…';
             try {
                 const res = await fetch(proxyBase(inspectPeerId) + 'api/cluster/info', { credentials: 'same-origin' });
+                if (!res.ok) {
+                    // The proxy returns 502 JSON when the peer itself
+                    // is unreachable — that is a network problem,
+                    // not a secret problem.
+                    let detail = `HTTP ${res.status}`;
+                    try {
+                        const err = await res.json();
+                        if (err && err.error) detail = err.error;
+                    } catch (e) { /* non-JSON body: keep status */ }
+                    badge.className = 'badge badge-red';
+                    badge.textContent = `peer unreachable: ${detail}`;
+                    document.getElementById('inspect-list').innerHTML =
+                        '<div class="empty-state">The peer is not reachable. Press Probe on its card to refresh, then try again.</div>';
+                    return false;
+                }
                 const ct = res.headers.get('content-type') || '';
                 // A secret mismatch makes the peer answer with its login
                 // page (HTML), not JSON — the proxy forwards it verbatim.
@@ -734,7 +746,7 @@
                 list.innerHTML = '<div class="empty-state">This peer has no managed services.</div>';
                 return;
             }
-            list.innerHTML = programs.map(p => `
+            list.innerHTML = programs.map((p, i) => `
                 <div class="panel-card p-3">
                     <div class="flex flex-wrap items-center justify-between gap-2">
                         <div class="flex items-center gap-2 min-w-0">
@@ -752,13 +764,13 @@
                             <button class="btn" onclick="peerAction('${escapeAttr(p.name)}', 'restart')" title="Restart ${escapeAttr(p.name)} on the peer">
                                 <i data-lucide="rotate-cw" class="w-3.5 h-3.5"></i>
                             </button>
-                            <button class="btn" onclick="togglePeerLogs('${escapeAttr(p.name)}')" title="Show last log lines for ${escapeAttr(p.name)}">
+                            <button class="btn" onclick="togglePeerLogs(${i}, '${escapeAttr(p.name)}')" title="Show last log lines for ${escapeAttr(p.name)}">
                                 <i data-lucide="scroll-text" class="w-3.5 h-3.5"></i>
                                 <span class="hidden sm:inline">Logs</span>
                             </button>
                         </div>
                     </div>
-                    <pre id="peer-logs-${escapeAttr(p.name)}" class="hidden text-xs font-mono mt-2 p-2 bg-[var(--bg-secondary)] border border-[var(--border-subtle)] rounded overflow-x-auto max-h-48 overflow-y-auto whitespace-pre-wrap"></pre>
+                    <pre id="peer-logs-${i}" class="hidden text-xs font-mono mt-2 p-2 bg-[var(--bg-secondary)] border border-[var(--border-subtle)] rounded overflow-x-auto max-h-48 overflow-y-auto whitespace-pre-wrap"></pre>
                 </div>`).join('');
             lucide.createIcons();
         }
@@ -778,8 +790,8 @@
             }).catch(err => toast('failed: ' + (err && err.message ? err.message : err), 'error'));
         }
 
-        function togglePeerLogs(name) {
-            const el = document.getElementById(`peer-logs-${name}`);
+        function togglePeerLogs(i, name) {
+            const el = document.getElementById(`peer-logs-${i}`);
             if (!el) return;
             if (!el.classList.contains('hidden')) {
                 el.classList.add('hidden');
@@ -865,7 +877,7 @@
                                     <i data-lucide="scan-eye" class="w-3.5 h-3.5"></i>
                                     <span class="hidden sm:inline">Inspect</span>
                                 </button>
-                                <button class="btn" onclick="openPeer('${escapeAttr(p.host)}', ${p.port})" title="Open this peer's dashboard in a new tab (log in there with that machine's own password)">
+                                <button class="btn" onclick="openPeer('${escapeAttr(p.host)}', ${Number(p.port) || 0})" title="Open this peer's dashboard in a new tab (log in there with that machine's own password)">
                                     <i data-lucide="external-link" class="w-3.5 h-3.5"></i>
                                     <span class="hidden sm:inline">Open</span>
                                 </button>
@@ -889,10 +901,11 @@
             document.getElementById('add-host').value = '';
             document.getElementById('add-port').value = '8881';
             document.getElementById('add-label').value = '';
-            // Pre-fill the secret with the local cluster secret
-            // if configured — the typical case is "all peers
-            // share the same secret".
-            document.getElementById('add-secret').value = (localInfo && localInfo.secret) || '';
+            // Leave the secret blank by default: the server falls
+            // back to this machine's own cluster.secret, which is
+            // the common case (same secret everywhere). Typing it
+            // explicitly overrides per-peer.
+            document.getElementById('add-secret').value = '';
             document.getElementById('add-error').classList.add('hidden');
             document.getElementById('modal-add').classList.add('open');
             setTimeout(() => document.getElementById('add-host').focus(), 50);

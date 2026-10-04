@@ -483,6 +483,36 @@ class TestBuildClusterBlock(unittest.TestCase):
         assert out["port"] == 9000
         assert out["advertise"] == "node-1"
 
+    def test_padded_secret_is_stripped(self):
+        out = cm.build_cluster_block({"secret": "  padded-secret  "}, {})
+        assert out["secret"] == "padded-secret"
+
+    def test_all_whitespace_secret_rejected(self):
+        with self.assertRaises(cm.ClusterError) as ctx:
+            cm.build_cluster_block({"secret": "        "}, {})
+        assert ctx.exception.code == "weak_secret"
+
+    def test_exactly_8_chars_accepted(self):
+        out = cm.build_cluster_block({"secret": "12345678"}, {})
+        assert out["secret"] == "12345678"
+
+    def test_clear_wins_over_supplied_secret(self):
+        out = cm.build_cluster_block(
+            {"secret": "brand-new-secret", "clear_secret": True},
+            {"secret": "old-secret"})
+        assert out["secret"] == ""
+
+    def test_unknown_keys_preserved(self):
+        out = cm.build_cluster_block(
+            {"port": 9000}, {"secret": "s3cret-s3cret", "future_opt": True})
+        assert out["future_opt"] is True
+        assert out["secret"] == "s3cret-s3cret"
+        assert out["port"] == 9000
+
+    def test_non_numeric_port_falls_back_to_default(self):
+        cfg = cm.get_cluster_config({"cluster": {"port": "not-a-port"}})
+        assert cfg["port"] == 8881
+
 
 def io_bytes(b):
     """Helper for HTTPError body."""
