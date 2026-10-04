@@ -426,6 +426,38 @@
         </div>
     </div>
 
+    <div class="modal-backdrop" id="modal-inspect" onclick="if(event.target===this) closeInspect()">
+        <div class="modal" style="max-width:56rem">
+            <div class="flex items-center justify-between gap-2 mb-1">
+                <h3 class="text-sm font-semibold flex items-center gap-2 min-w-0">
+                    <i data-lucide="scan-eye" class="w-4 h-4 text-[var(--accent-cyan)]"></i>
+                    <span id="inspect-title" class="truncate">Peer services</span>
+                </h3>
+                <button class="btn" onclick="closeInspect()" title="Close peer inspection"><i data-lucide="x" class="w-4 h-4"></i></button>
+            </div>
+            <div class="flex flex-wrap items-center gap-2 mb-3 text-xs">
+                <span id="inspect-secret" class="badge badge-gray">checking secret…</span>
+                <button class="btn" id="inspect-verify" onclick="reverifyInspect()" title="Re-check that the shared secret matches this peer">
+                    <i data-lucide="key-round" class="w-3.5 h-3.5"></i>
+                    <span class="hidden sm:inline">Verify secret</span>
+                </button>
+                <button class="btn" id="inspect-reload" onclick="loadInspectServices()" title="Reload this peer's service list">
+                    <i data-lucide="refresh-cw" class="w-3.5 h-3.5"></i>
+                    <span class="hidden sm:inline">Reload</span>
+                </button>
+            </div>
+            <div id="inspect-error" class="text-xs text-[var(--accent-red)] hidden mb-2"></div>
+            <div id="inspect-list" class="space-y-2 max-h-[50vh] overflow-y-auto">
+                <div class="empty-state">Loading…</div>
+            </div>
+            <p class="text-xs text-[var(--text-muted)] leading-relaxed mt-3">
+                Live terminal, files and the full dashboard stay on the peer's own page — use
+                <strong>Open</strong> for those (log in there with that machine's own password).
+                Service start/stop/restart here runs on the peer immediately and is logged in its activity log.
+            </p>
+        </div>
+    </div>
+
     <div class="toast-container" id="toast-container"></div>
 
     <script>
@@ -625,6 +657,153 @@
             window.open(`http://${host}:${p}`, '_blank', 'noopener');
         }
 
+        let inspectPeerId = null;
+        let inspectPeer = null;
+
+        function proxyBase(peerId) {
+            return `/api/cluster/node/${encodeURIComponent(peerId)}/proxy/`;
+        }
+
+        function openInspect(peerId) {
+            inspectPeerId = peerId;
+            inspectPeer = ((peersData && peersData.peers) || []).find(p => p.id === peerId) || null;
+            const label = inspectPeer ? inspectPeer.label : peerId;
+            const host = inspectPeer ? `${inspectPeer.host}:${inspectPeer.port}` : '';
+            document.getElementById('inspect-title').textContent = `Services on ${label}${host ? ` (${host})` : ''}`;
+            document.getElementById('inspect-error').classList.add('hidden');
+            document.getElementById('inspect-list').innerHTML = '<div class="empty-state">Loading…</div>';
+            document.getElementById('modal-inspect').classList.add('open');
+            verifyInspectSecret().then(ok => { if (ok) loadInspectServices(); });
+        }
+        function closeInspect() {
+            document.getElementById('modal-inspect').classList.remove('open');
+            inspectPeerId = null;
+            inspectPeer = null;
+        }
+        function reverifyInspect() {
+            if (!inspectPeerId) return;
+            verifyInspectSecret().then(ok => { if (ok) loadInspectServices(); });
+        }
+
+        async function verifyInspectSecret() {
+            const badge = document.getElementById('inspect-secret');
+            badge.className = 'badge badge-gray';
+            badge.textContent = 'checking secret…';
+            try {
+                const res = await fetch(proxyBase(inspectPeerId) + 'api/cluster/info', { credentials: 'same-origin' });
+                const ct = res.headers.get('content-type') || '';
+                // A secret mismatch makes the peer answer with its login
+                // page (HTML), not JSON — the proxy forwards it verbatim.
+                if (!ct.includes('json')) throw new Error('mismatch');
+                const data = await res.json();
+                if (!data || !data.hostname) throw new Error('mismatch');
+                badge.className = 'badge badge-green';
+                badge.textContent = `secret OK (peer: ${data.hostname})`;
+                return true;
+            } catch (err) {
+                badge.className = 'badge badge-red';
+                badge.textContent = 'secret mismatch — set the identical cluster.secret on both machines';
+                document.getElementById('inspect-list').innerHTML =
+                    '<div class="empty-state">Set the same shared secret on both machines (This machine\'s cluster settings above), then press Verify secret.</div>';
+                return false;
+            }
+        }
+
+        function peerStatusBadge(status) {
+            const s = String(status || '').toLowerCase();
+            if (s === 'running') return '<span class="badge badge-green">running</span>';
+            if (s === 'failed' || s === 'error') return '<span class="badge badge-red">' + escapeHtml(s) + '</span>';
+            if (s === 'starting' || s === 'restarting') return '<span class="badge badge-yellow">' + escapeHtml(s) + '</span>';
+            return '<span class="badge badge-gray">' + escapeHtml(s || 'unknown') + '</span>';
+        }
+
+        function loadInspectServices() {
+            if (!inspectPeerId) return;
+            api(proxyBase(inspectPeerId) + 'programs').then(({ status, data }) => {
+                if (status >= 400 || !Array.isArray(data)) {
+                    showInspectError((data && data.error) || `HTTP ${status}`);
+                    return;
+                }
+                renderInspectServices(data);
+            }).catch(err => showInspectError('failed: ' + (err && err.message ? err.message : err)));
+        }
+
+        function renderInspectServices(programs) {
+            const list = document.getElementById('inspect-list');
+            if (!programs.length) {
+                list.innerHTML = '<div class="empty-state">This peer has no managed services.</div>';
+                return;
+            }
+            list.innerHTML = programs.map(p => `
+                <div class="panel-card p-3">
+                    <div class="flex flex-wrap items-center justify-between gap-2">
+                        <div class="flex items-center gap-2 min-w-0">
+                            <span class="peer-name truncate">${escapeHtml(p.name)}</span>
+                            ${peerStatusBadge(p.status)}
+                            <span class="text-xs text-[var(--text-muted)] font-mono">restarts: ${Number.isFinite(p.restart_count) ? p.restart_count : '—'}</span>
+                        </div>
+                        <div class="flex items-center gap-1.5">
+                            <button class="btn" onclick="peerAction('${escapeAttr(p.name)}', 'start')" title="Start ${escapeAttr(p.name)} on the peer">
+                                <i data-lucide="play" class="w-3.5 h-3.5"></i>
+                            </button>
+                            <button class="btn" onclick="peerAction('${escapeAttr(p.name)}', 'stop')" title="Stop ${escapeAttr(p.name)} on the peer">
+                                <i data-lucide="square" class="w-3.5 h-3.5"></i>
+                            </button>
+                            <button class="btn" onclick="peerAction('${escapeAttr(p.name)}', 'restart')" title="Restart ${escapeAttr(p.name)} on the peer">
+                                <i data-lucide="rotate-cw" class="w-3.5 h-3.5"></i>
+                            </button>
+                            <button class="btn" onclick="togglePeerLogs('${escapeAttr(p.name)}')" title="Show last log lines for ${escapeAttr(p.name)}">
+                                <i data-lucide="scroll-text" class="w-3.5 h-3.5"></i>
+                                <span class="hidden sm:inline">Logs</span>
+                            </button>
+                        </div>
+                    </div>
+                    <pre id="peer-logs-${escapeAttr(p.name)}" class="hidden text-xs font-mono mt-2 p-2 bg-[var(--bg-secondary)] border border-[var(--border-subtle)] rounded overflow-x-auto max-h-48 overflow-y-auto whitespace-pre-wrap"></pre>
+                </div>`).join('');
+            lucide.createIcons();
+        }
+
+        function peerAction(name, action) {
+            if (!inspectPeerId) return;
+            api(proxyBase(inspectPeerId) + `programs/${encodeURIComponent(name)}/${action}`, {
+                method: 'POST',
+                body: JSON.stringify({}),
+            }).then(({ status, data }) => {
+                if (status === 200) {
+                    toast(`${action} ${name} on peer`, 'success');
+                    loadInspectServices();
+                } else {
+                    toast((data && data.error) || `HTTP ${status}`, 'error');
+                }
+            }).catch(err => toast('failed: ' + (err && err.message ? err.message : err), 'error'));
+        }
+
+        function togglePeerLogs(name) {
+            const el = document.getElementById(`peer-logs-${name}`);
+            if (!el) return;
+            if (!el.classList.contains('hidden')) {
+                el.classList.add('hidden');
+                return;
+            }
+            el.classList.remove('hidden');
+            el.textContent = 'Loading…';
+            api(proxyBase(inspectPeerId) + `programs/${encodeURIComponent(name)}/logs/tail`).then(({ status, data }) => {
+                if (status >= 400 || !data || !Array.isArray(data.logs)) {
+                    el.textContent = 'Failed to load logs: ' + ((data && data.error) || `HTTP ${status}`);
+                    return;
+                }
+                el.textContent = data.logs.length ? data.logs.join('\n') : '(no log lines)';
+            }).catch(err => {
+                el.textContent = 'Failed to load logs: ' + (err && err.message ? err.message : err);
+            });
+        }
+
+        function showInspectError(msg) {
+            const el = document.getElementById('inspect-error');
+            el.textContent = msg;
+            el.classList.remove('hidden');
+        }
+
         function loadPeers() {
             api('/api/cluster/nodes').then(({ status, data }) => {
                 if (status >= 400) {
@@ -682,6 +861,10 @@
                                 </div>
                             </div>
                             <div class="flex items-center gap-1.5 flex-shrink-0">
+                                <button class="btn" onclick="openInspect('${escapeAttr(p.id)}')" title="Inspect this peer's services (uses the shared secret)">
+                                    <i data-lucide="scan-eye" class="w-3.5 h-3.5"></i>
+                                    <span class="hidden sm:inline">Inspect</span>
+                                </button>
                                 <button class="btn" onclick="openPeer('${escapeAttr(p.host)}', ${p.port})" title="Open this peer's dashboard in a new tab (log in there with that machine's own password)">
                                     <i data-lucide="external-link" class="w-3.5 h-3.5"></i>
                                     <span class="hidden sm:inline">Open</span>
@@ -843,7 +1026,7 @@
         }
 
         document.addEventListener('keydown', e => {
-            if (e.key === 'Escape') { closeAdd(); closeMdns(); }
+            if (e.key === 'Escape') { closeAdd(); closeMdns(); closeInspect(); }
         });
 
         lucide.createIcons();

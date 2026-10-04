@@ -159,10 +159,12 @@ def require_login():
         return None
     # Cluster peer auth: cross-node API calls carry the shared
     # secret in X-SSM-Cluster-Secret. Accept it as an alternative
-    # credential for /api/* so peers authenticate even when their
-    # Flask SECRET_KEY differs (session cookies are instance-signed
-    # and don't verify across hosts). Empty secret never verifies.
-    if (request.path or "").startswith("/api/"):
+    # credential for /api/* and /programs/* (managed-service list,
+    # control and logs, which the cluster proxy needs) so peers
+    # authenticate even when their Flask SECRET_KEY differs (session
+    # cookies are instance-signed and don't verify across hosts).
+    # Empty secret never verifies.
+    if (request.path or "").startswith(("/api/", "/programs/")):
         try:
             _cfg = pm.config_data if hasattr(pm, "config_data") else {}
         except Exception:
