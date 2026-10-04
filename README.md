@@ -96,6 +96,7 @@ git clone https://github.com/Rishabh-Bajpai/server-services-manager.git
 cd server-services-manager
 pip install -r requirements.txt
 cp .env.example .env          # then set a secure password
+bash install-code-server.sh   # one-time, required for the /code page (VS Code in the browser; needs curl + tar, no root)
 ./start.sh
 ```
 
