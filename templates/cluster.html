@@ -182,12 +182,14 @@
     {% set actions %}
     {% endset %}
     {% set page_info %}
-        <p style="margin-bottom:0.75rem">If you run this manager on <strong>more than one machine</strong>, this page links them so you can hop between them.</p>
-        <ul style="list-style:disc;padding-left:1.25rem;display:grid;gap:0.375rem">
-            <li><strong>Add Peer</strong> registers another machine (address + shared secret). The dot shows whether it's reachable right now.</li>
-            <li>Opening a peer <strong>logs you in there automatically</strong> — no second password — using the shared secret.</li>
-            <li>Nothing is broadcast automatically. With no peers added, this page simply stays empty. One machine is the normal case.</li>
-        </ul>
+        <p style="margin-bottom:0.75rem">If you run this manager on <strong>more than one machine</strong>, this page links them so you can monitor them from here.</p>
+        <ol style="list-style:decimal;padding-left:1.25rem;display:grid;gap:0.375rem">
+            <li><strong>Set the same shared secret</strong> on every machine (<code class="font-mono">cluster.secret</code> in <code class="font-mono">config.yaml</code>) and restart each manager. Without it, peers reject each other's API calls.</li>
+            <li><strong>Add Peer</strong> below with the other machine's address + that same secret. Leave the secret blank to reuse this machine's own <code class="font-mono">cluster.secret</code>.</li>
+            <li><strong>Probe</strong> to check reachability (the dot on each card). Green means its <code class="font-mono">/health</code> answered.</li>
+            <li><strong>Open</strong> jumps to the peer's dashboard in a new tab (log in there with <em>that</em> machine's password). API calls made through the proxy use the shared secret automatically.</li>
+        </ol>
+        <p style="margin-top:0.75rem">Nothing is broadcast automatically. With no peers added, this page simply stays empty — one machine is the normal case.</p>
         {% endset %}
     {{ ui.header(
         title="Cluster",
@@ -225,11 +227,60 @@
                     <div class="text-xs text-[var(--text-secondary)] mt-1 font-mono" id="local-info">
                         Loading…
                     </div>
+                    <div class="text-xs mt-1" id="local-secret">
+                        <span class="badge badge-gray">checking shared secret…</span>
+                    </div>
                 </div>
                 <span id="local-status" class="badge badge-green">
                     <i data-lucide="check-circle" class="w-3 h-3"></i>
                     online
                 </span>
+            </div>
+        </section>
+
+        <section class="panel-card p-4">
+            <div class="flex flex-wrap items-center justify-between gap-2 mb-1">
+                <h2 class="text-sm font-semibold flex items-center gap-2">
+                    <i data-lucide="settings-2" class="w-4 h-4 text-[var(--accent-green)]"></i>
+                    This machine's cluster settings
+                </h2>
+                <span id="cfg-secret-status" class="badge badge-gray">loading…</span>
+            </div>
+            <p class="text-xs text-[var(--text-secondary)] leading-relaxed mb-3">
+                Saved to the <code class="font-mono">cluster:</code> block in <code class="font-mono">config.yaml</code> and applied immediately — no restart needed.
+                Use the <strong>same secret on every machine</strong> you want to link.
+            </p>
+            <div class="grid grid-cols-1 sm:grid-cols-2 gap-3">
+                <div class="sm:col-span-2">
+                    <label class="text-xs text-[var(--text-secondary)] block mb-1">New shared secret (min 8 characters; blank keeps the current one)</label>
+                    <div class="flex gap-2">
+                        <input id="cfg-secret" class="text-input" type="password" placeholder="unchanged" autocomplete="off">
+                        <button class="btn" id="cfg-secret-toggle" onclick="toggleCfgSecret()" title="Show/hide the secret">
+                            <i data-lucide="eye" class="w-3.5 h-3.5"></i>
+                        </button>
+                    </div>
+                </div>
+                <div>
+                    <label class="text-xs text-[var(--text-secondary)] block mb-1">Port this node listens on</label>
+                    <input id="cfg-port" class="text-input" type="number" min="1" max="65535" value="8881">
+                </div>
+                <div>
+                    <label class="text-xs text-[var(--text-secondary)] block mb-1">Advertise address (optional)</label>
+                    <input id="cfg-advertise" class="text-input" placeholder="auto-detect">
+                </div>
+                <label class="flex items-center gap-2 text-xs text-[var(--text-secondary)] sm:col-span-2">
+                    <input id="cfg-enabled" type="checkbox" class="w-4 h-4">
+                    Enable mDNS advertise/browse <span class="text-[var(--text-muted)]">(needs the optional <code class="font-mono">zeroconf</code> package; manual peers work without it)</span>
+                </label>
+            </div>
+            <div id="cfg-error" class="text-xs text-[var(--accent-red)] hidden mt-2"></div>
+            <div class="flex flex-wrap justify-end gap-2 mt-3">
+                <button class="btn btn-danger" id="cfg-clear" onclick="clearClusterSecret()" title="Remove the shared secret from this machine (peers will reject its calls)">
+                    <i data-lucide="key-x" class="w-3.5 h-3.5"></i> Remove secret
+                </button>
+                <button class="btn btn-primary" id="cfg-save" onclick="saveClusterConfig(false)" title="Save these cluster settings">
+                    <i data-lucide="save" class="w-3.5 h-3.5"></i> Save settings
+                </button>
             </div>
         </section>
 
@@ -250,6 +301,38 @@
                 <span class="label">Mode</span>
                 <span class="value text-[var(--text-secondary)]" id="stat-mode">—</span>
             </div>
+        </section>
+
+        <section class="panel-card p-4">
+            <h2 class="text-sm font-semibold flex items-center gap-2 mb-3">
+                <i data-lucide="list-checks" class="w-4 h-4 text-[var(--accent-green)]"></i>
+                Setup checklist
+            </h2>
+            <ol id="setup-checklist" class="grid gap-2 text-xs text-[var(--text-secondary)] leading-relaxed">
+                <li class="flex items-start gap-2" data-step="secret">
+                    <span class="step-icon">○</span>
+                    <span><strong class="text-[var(--text-primary)]">1. Same shared secret on every machine.</strong>
+                    Set it in <strong>This machine's cluster settings</strong> above (saved to <code class="font-mono">config.yaml</code>, takes effect immediately) — repeat on each node.
+                    <span id="check-secret" class="font-mono"></span></span>
+                </li>
+                <li class="flex items-start gap-2" data-step="peer">
+                    <span class="step-icon">○</span>
+                    <span><strong class="text-[var(--text-primary)]">2. Add the other machine below</strong>
+                    with <strong>Add Peer</strong> (host + port + that same secret).
+                    <span id="check-peer" class="font-mono"></span></span>
+                </li>
+                <li class="flex items-start gap-2" data-step="probe">
+                    <span class="step-icon">○</span>
+                    <span><strong class="text-[var(--text-primary)]">3. Press Probe.</strong>
+                    Green dot = its <code class="font-mono">/health</code> answered. Red = wrong address, offline, or mismatched secret.
+                    <span id="check-probe" class="font-mono"></span></span>
+                </li>
+                <li class="flex items-start gap-2" data-step="open">
+                    <span class="step-icon">○</span>
+                    <span><strong class="text-[var(--text-primary)]">4. Press Open on a reachable peer</strong>
+                    to jump to its dashboard (new tab — log in there with that machine's own password).</span>
+                </li>
+            </ol>
         </section>
 
         <section class="panel-card">
@@ -323,8 +406,14 @@
                     <input id="add-label" class="text-input" placeholder="homelab-node-1">
                 </div>
                 <div>
-                    <label class="text-xs text-[var(--text-secondary)] block mb-1">Secret (optional, falls back to local cluster.secret)</label>
-                    <input id="add-secret" class="text-input" type="password" placeholder="my-shared-secret">
+                    <label class="text-xs text-[var(--text-secondary)] block mb-1">Shared secret — must match <code class="font-mono">cluster.secret</code> on the other machine</label>
+                    <div class="flex gap-2">
+                        <input id="add-secret" class="text-input" type="password" placeholder="my-shared-secret" autocomplete="off">
+                        <button class="btn" id="secret-toggle" onclick="toggleSecret()" title="Show/hide the secret">
+                            <i data-lucide="eye" class="w-3.5 h-3.5"></i>
+                        </button>
+                    </div>
+                    <p class="text-xs text-[var(--text-muted)] mt-1">Leave blank to reuse this machine's own <code class="font-mono">cluster.secret</code>. If neither side has a secret set, peer API calls are rejected — see the checklist above.</p>
                 </div>
                 <div id="add-error" class="text-xs text-[var(--accent-red)] hidden"></div>
             </div>
@@ -409,6 +498,131 @@
             const info = document.getElementById('local-info');
             info.textContent = `${localInfo.hostname} @ port ${localInfo.port}${localInfo.advertise ? ' (advertise ' + localInfo.advertise + ')' : ''}`;
             document.getElementById('stat-mode').textContent = localInfo.enabled ? 'active' : 'manual';
+            const sec = document.getElementById('local-secret');
+            if (localInfo.has_secret) {
+                sec.innerHTML = '<span class="badge badge-green"><i data-lucide="key-round" class="w-3 h-3"></i> shared secret set</span>';
+            } else {
+                sec.innerHTML = '<span class="badge badge-yellow"><i data-lucide="triangle-alert" class="w-3 h-3"></i> no shared secret — set cluster.secret in config.yaml and restart</span>';
+            }
+            lucide.createIcons();
+            renderChecklist();
+        }
+
+        function renderChecklist() {
+            // Step 1: local secret configured?
+            const secretOk = !!(localInfo && localInfo.has_secret);
+            // Step 2: at least one peer registered?
+            const peerCount = (peersData && peersData.count) || 0;
+            // Step 3: at least one peer reachable?
+            const reachable = (peersData && peersData.reachable) || 0;
+            setStep('secret', secretOk);
+            setStep('peer', peerCount > 0);
+            setStep('probe', reachable > 0);
+            setStep('open', reachable > 0);
+            const cs = document.getElementById('check-secret');
+            if (cs) cs.textContent = secretOk ? '(this node: set ✓)' : '(this node: MISSING — peers will reject its calls)';
+            const cp = document.getElementById('check-peer');
+            if (cp) cp.textContent = peerCount > 0 ? `(${peerCount} registered)` : '(none yet)';
+            const cr = document.getElementById('check-probe');
+            if (cr) cr.textContent = reachable > 0 ? `(${reachable} reachable)` : peerCount > 0 ? '(none reachable yet — press Probe)' : '';
+        }
+
+        function setStep(name, done) {
+            const li = document.querySelector(`#setup-checklist li[data-step="${name}"] .step-icon`);
+            if (!li) return;
+            li.textContent = done ? '●' : '○';
+            li.style.color = done ? 'var(--accent-green)' : 'var(--text-muted)';
+        }
+
+        function toggleSecret() {
+            const el = document.getElementById('add-secret');
+            const btn = document.getElementById('secret-toggle');
+            const show = el.type === 'password';
+            el.type = show ? 'text' : 'password';
+            if (btn) btn.innerHTML = `<i data-lucide="${show ? 'eye-off' : 'eye'}" class="w-3.5 h-3.5"></i>`;
+            lucide.createIcons();
+        }
+
+        function loadClusterConfig() {
+            api('/api/cluster/config').then(({ status, data }) => {
+                if (status >= 400) {
+                    showCfgError(data.error || `HTTP ${status}`);
+                    return;
+                }
+                document.getElementById('cfg-port').value = data.port;
+                document.getElementById('cfg-advertise').value = data.advertise || '';
+                document.getElementById('cfg-enabled').checked = !!data.enabled;
+                document.getElementById('cfg-secret').value = '';
+                document.getElementById('cfg-secret').placeholder =
+                    data.has_secret ? 'unchanged (a secret is set)' : 'not set — enter one (min 8 characters)';
+                const st = document.getElementById('cfg-secret-status');
+                st.className = 'badge ' + (data.has_secret ? 'badge-green' : 'badge-yellow');
+                st.textContent = data.has_secret ? 'secret set' : 'no secret';
+            }).catch(err => showCfgError('failed: ' + (err && err.message ? err.message : err)));
+        }
+
+        function toggleCfgSecret() {
+            const el = document.getElementById('cfg-secret');
+            const btn = document.getElementById('cfg-secret-toggle');
+            const show = el.type === 'password';
+            el.type = show ? 'text' : 'password';
+            if (btn) btn.innerHTML = `<i data-lucide="${show ? 'eye-off' : 'eye'}" class="w-3.5 h-3.5"></i>`;
+            lucide.createIcons();
+        }
+
+        function showCfgError(msg) {
+            const el = document.getElementById('cfg-error');
+            el.textContent = msg;
+            el.classList.remove('hidden');
+        }
+
+        function hideCfgError() {
+            document.getElementById('cfg-error').classList.add('hidden');
+        }
+
+        function saveClusterConfig(clear) {
+            hideCfgError();
+            const body = clear ? { clear_secret: true } : {
+                secret: document.getElementById('cfg-secret').value,
+                port: parseInt(document.getElementById('cfg-port').value, 10),
+                advertise: document.getElementById('cfg-advertise').value.trim(),
+                enabled: document.getElementById('cfg-enabled').checked,
+            };
+            const saveBtn = document.getElementById('cfg-save');
+            const clearBtn = document.getElementById('cfg-clear');
+            saveBtn.disabled = true;
+            clearBtn.disabled = true;
+            api('/api/cluster/config', { method: 'PUT', body: JSON.stringify(body) })
+                .then(({ status, data }) => {
+                    saveBtn.disabled = false;
+                    clearBtn.disabled = false;
+                    if (status === 200) {
+                        toast(clear ? 'Shared secret removed' : 'Cluster settings saved — active now, no restart needed', 'success');
+                        loadClusterConfig();
+                        loadLocal();
+                    } else {
+                        showCfgError(data.error || `HTTP ${status}`);
+                    }
+                })
+                .catch(err => {
+                    saveBtn.disabled = false;
+                    clearBtn.disabled = false;
+                    showCfgError('failed: ' + (err && err.message ? err.message : err));
+                });
+        }
+
+        async function clearClusterSecret() {
+            if (!await uiConfirm('Remove the shared secret?', 'This machine will reject all peer API calls until a new secret is set.', true)) return;
+            saveClusterConfig(true);
+        }
+
+        function openPeer(host, port) {
+            const p = parseInt(port, 10);
+            if (!host || !Number.isFinite(p)) {
+                toast('peer has an invalid address', 'error');
+                return;
+            }
+            window.open(`http://${host}:${p}`, '_blank', 'noopener');
         }
 
         function loadPeers() {
@@ -433,6 +647,7 @@
             document.getElementById('stat-reachable').textContent = String(peersData.reachable);
             document.getElementById('stat-unreachable').textContent = String(peersData.unreachable);
             document.getElementById('peer-count').textContent = String(peersData.count);
+            renderChecklist();
         }
 
         function statusClass(p) {
@@ -466,9 +681,15 @@
                                     <div class="peer-host">${escapeHtml(p.host)}:${p.port}</div>
                                 </div>
                             </div>
-                            <button class="btn btn-danger" onclick="askRemove('${escapeAttr(p.id)}', '${escapeAttr(p.label)}')" title="Remove peer">
-                                <i data-lucide="trash-2" class="w-3.5 h-3.5"></i>
-                            </button>
+                            <div class="flex items-center gap-1.5 flex-shrink-0">
+                                <button class="btn" onclick="openPeer('${escapeAttr(p.host)}', ${p.port})" title="Open this peer's dashboard in a new tab (log in there with that machine's own password)">
+                                    <i data-lucide="external-link" class="w-3.5 h-3.5"></i>
+                                    <span class="hidden sm:inline">Open</span>
+                                </button>
+                                <button class="btn btn-danger" onclick="askRemove('${escapeAttr(p.id)}', '${escapeAttr(p.label)}')" title="Remove peer">
+                                    <i data-lucide="trash-2" class="w-3.5 h-3.5"></i>
+                                </button>
+                            </div>
                         </div>
                         <div class="flex items-center justify-between gap-2 text-xs text-[var(--text-secondary)]">
                             <span>${escapeHtml(statusLabel(p))}</span>
@@ -627,6 +848,7 @@
 
         lucide.createIcons();
         loadLocal();
+        loadClusterConfig();
         loadPeers();
     </script>
 </body>

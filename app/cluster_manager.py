@@ -93,6 +93,91 @@ def local_identity(cfg_data: Dict[str, Any]) -> Dict[str, str]:
     }
 
 
+_MIN_CLUSTER_SECRET_LEN = 8
+
+
+def build_cluster_block(
+    payload: Dict[str, Any],
+    existing: Optional[Dict[str, Any]] = None,
+) -> Dict[str, Any]:
+    """Validate a cluster-settings update and return the new block.
+
+    Pure function (no I/O) so the GUI save path is unit-testable.
+    ``payload`` comes from ``PUT /api/cluster/config``; ``existing``
+    is the current ``cluster:`` block from config.yaml (or {}).
+
+    - ``secret``: absent/empty keeps the existing secret, unless
+      ``clear_secret`` is truthy (which wipes it). A new secret
+      must be at least 8 characters.
+    - ``enabled``: boolean, defaults to the existing value.
+    - ``port``: integer 1-65535, defaults to the existing value.
+    - ``advertise``: empty string or a hostname/IP (same charset
+      rules as peer hosts).
+
+    Raises :class:`ClusterError` on invalid input. Never logs or
+    returns the secret itself — callers decide what to expose.
+    """
+    import re as _re
+
+    base = dict(existing or {})
+    _raw_port = base.get("port", 8881)
+    _base_port = 8881
+    if isinstance(_raw_port, bool):
+        pass
+    elif isinstance(_raw_port, int):
+        _base_port = _raw_port
+    elif isinstance(_raw_port, str) and _raw_port.strip().isdigit():
+        _base_port = int(_raw_port.strip())
+    out: Dict[str, Any] = {
+        "enabled": bool(base.get("enabled", False)),
+        "secret": str(base.get("secret", "") or ""),
+        "port": _base_port,
+        "advertise": str(base.get("advertise", "") or ""),
+    }
+
+    if "enabled" in (payload or {}):
+        out["enabled"] = bool(payload.get("enabled"))
+
+    if "port" in (payload or {}):
+        _raw_port_in = payload.get("port")
+        try:
+            port = int(str(_raw_port_in).strip())
+        except (TypeError, ValueError):
+            raise ClusterError(
+                "invalid_port", f"port must be an integer (got {_raw_port_in!r})"
+            )
+        if not (1 <= port <= 65535):
+            raise ClusterError("invalid_port", f"port out of range: {port}")
+        out["port"] = port
+
+    if "advertise" in (payload or {}):
+        adv = str(payload.get("advertise") or "").strip()
+        if adv:
+            if len(adv) > 253 or not _re.fullmatch(
+                r"[A-Za-z0-9]([A-Za-z0-9._-]*[A-Za-z0-9])?", adv
+            ):
+                raise ClusterError(
+                    "invalid_advertise", f"invalid hostname or IP: {adv!r}"
+                )
+        out["advertise"] = adv
+
+    if bool((payload or {}).get("clear_secret")):
+        out["secret"] = ""
+    elif "secret" in (payload or {}):
+        new_secret = str(payload.get("secret") or "")
+        # Note: not stripped — secrets may legitimately contain
+        # leading/trailing spaces; the peer form trims on input.
+        if new_secret:
+            if len(new_secret) < _MIN_CLUSTER_SECRET_LEN:
+                raise ClusterError(
+                    "weak_secret",
+                    f"secret must be at least {_MIN_CLUSTER_SECRET_LEN} characters",
+                )
+            out["secret"] = new_secret
+
+    return out
+
+
 # ---------------------------------------------------------------------------
 # Peer registry (manual + persisted)
 # ---------------------------------------------------------------------------

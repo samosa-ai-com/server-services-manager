@@ -434,6 +434,56 @@ class TestTryMdnsBrowse(unittest.TestCase):
                 sys.modules.pop("zeroconf", None)
 
 
+class TestBuildClusterBlock(unittest.TestCase):
+    def test_empty_payload_keeps_existing(self):
+        out = cm.build_cluster_block(
+            {}, {"enabled": True, "secret": "old-secret", "port": 9000,
+                 "advertise": "10.0.0.1"})
+        assert out == {"enabled": True, "secret": "old-secret",
+                       "port": 9000, "advertise": "10.0.0.1"}
+
+    def test_empty_existing_gives_defaults(self):
+        out = cm.build_cluster_block({}, {})
+        assert out == {"enabled": False, "secret": "", "port": 8881,
+                       "advertise": ""}
+
+    def test_new_secret_replaces(self):
+        out = cm.build_cluster_block({"secret": "brand-new-secret"}, {})
+        assert out["secret"] == "brand-new-secret"
+
+    def test_blank_secret_keeps_existing(self):
+        out = cm.build_cluster_block({"secret": ""}, {"secret": "keep-me"})
+        assert out["secret"] == "keep-me"
+
+    def test_clear_secret_wipes(self):
+        out = cm.build_cluster_block(
+            {"clear_secret": True}, {"secret": "old-secret"})
+        assert out["secret"] == ""
+
+    def test_weak_secret_rejected(self):
+        with self.assertRaises(cm.ClusterError) as ctx:
+            cm.build_cluster_block({"secret": "short"}, {})
+        assert ctx.exception.code == "weak_secret"
+
+    def test_bad_port_rejected(self):
+        for bad in ("abc", 0, 70000):
+            with self.assertRaises(cm.ClusterError) as ctx:
+                cm.build_cluster_block({"port": bad}, {})
+            assert ctx.exception.code == "invalid_port"
+
+    def test_bad_advertise_rejected(self):
+        with self.assertRaises(cm.ClusterError) as ctx:
+            cm.build_cluster_block({"advertise": "not a host!"}, {})
+        assert ctx.exception.code == "invalid_advertise"
+
+    def test_valid_fields_applied(self):
+        out = cm.build_cluster_block(
+            {"enabled": True, "port": "9000", "advertise": "node-1"}, {})
+        assert out["enabled"] is True
+        assert out["port"] == 9000
+        assert out["advertise"] == "node-1"
+
+
 def io_bytes(b):
     """Helper for HTTPError body."""
     import io

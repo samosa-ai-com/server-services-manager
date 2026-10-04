@@ -3448,6 +3448,67 @@ def api_cluster_mdns():
     return jsonify({"peers": cluster_manager.try_mdns_browse(timeout=timeout)})
 
 
+@app.route('/api/cluster/config', methods=['GET'])
+@openapi_mod.describe(
+    summary="Read this node's cluster settings",
+    description=(
+        "Returns the local cluster: block (enabled, port, "
+        "advertise) plus has_secret. The raw secret is never "
+        "returned — the peer registry and proxy read it "
+        "server-side."
+    ),
+    tag="Cluster",
+)
+def api_cluster_config_get():
+    cfg_data = pm.config_data if hasattr(pm, "config_data") else {}
+    cfg = cluster_manager.get_cluster_config(cfg_data)
+    ident = cluster_manager.local_identity(cfg_data)
+    return jsonify({
+        "enabled": cfg["enabled"],
+        "port": cfg["port"],
+        "advertise": cfg["advertise"],
+        "has_secret": bool(cfg["secret"]),
+        "hostname": ident["hostname"],
+    })
+
+
+@app.route('/api/cluster/config', methods=['PUT'])
+@openapi_mod.describe(
+    summary="Update this node's cluster settings",
+    description=(
+        "Writes the cluster: block to config.yaml (secret, "
+        "enabled, port, advertise). Omit secret to keep the "
+        "existing one; pass clear_secret=true to remove it. "
+        "Takes effect immediately — no restart needed."
+    ),
+    tag="Cluster",
+)
+def api_cluster_config_put():
+    payload = request.get_json(silent=True) or {}
+    cfg_data = pm.config_data if hasattr(pm, "config_data") else {}
+    try:
+        block = cluster_manager.build_cluster_block(
+            payload, (cfg_data or {}).get("cluster") or {}
+        )
+    except cluster_manager.ClusterError as e:
+        http = 409 if e.code == "duplicate" else 400
+        return jsonify({"error": str(e), "code": e.code}), http
+    pm.config_data["cluster"] = block
+    pm._save_config_file()
+    activity.log(
+        "cluster.update_config", target="local", status="ok",
+        detail=f"enabled={block['enabled']} port={block['port']}",
+        ip=request.remote_addr or "",
+    )
+    return jsonify({
+        "enabled": block["enabled"],
+        "port": block["port"],
+        "advertise": block["advertise"],
+        "has_secret": bool(block["secret"]),
+        "hostname": cluster_manager.local_identity(pm.config_data)["hostname"],
+    })
+
+
 @app.route('/api/cluster/node/<peer_id>/proxy/<path:rest>', methods=['GET', 'POST', 'PUT', 'DELETE'])
 @openapi_mod.describe(
     summary="Proxy an API request to a peer",
