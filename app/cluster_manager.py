@@ -76,7 +76,9 @@ def get_cluster_config(cfg_data: Dict[str, Any]) -> Dict[str, Any]:
         _port = 8881
     return {
         "enabled": bool(block.get("enabled", False)),
-        "secret": str(block.get("secret", "") or ""),
+        # Stripped so a legacy padded value self-heals; verify
+        # strips the provided side, and saves strip on write.
+        "secret": str(block.get("secret", "") or "").strip(),
         "port": _port,
         "advertise": str(block.get("advertise", "") or ""),
     }

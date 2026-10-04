@@ -513,6 +513,14 @@ class TestBuildClusterBlock(unittest.TestCase):
         cfg = cm.get_cluster_config({"cluster": {"port": "not-a-port"}})
         assert cfg["port"] == 8881
 
+    def test_config_secret_is_stripped(self):
+        cfg = cm.get_cluster_config({"cluster": {"secret": "  padded  "}})
+        assert cfg["secret"] == "padded"
+
+    def test_padded_config_secret_verifies(self):
+        cfg_data = {"cluster": {"secret": "  padded-secret  "}}
+        assert cm.verify_cluster_secret("padded-secret", cfg_data) is True
+
 
 def io_bytes(b):
     """Helper for HTTPError body."""

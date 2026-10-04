@@ -493,6 +493,7 @@
         // and mDNS hosts come from the LAN, so both must use this.
         function escapeAttr(s) {
             return String(s)
+                .replace(/\\/g, '\\\\')
                 .replace(/&/g, '&amp;')
                 .replace(/"/g, '&quot;')
                 .replace(/</g, '&lt;')
@@ -647,7 +648,7 @@
 
         function openPeer(host, port) {
             const p = parseInt(port, 10);
-            if (!host || !Number.isFinite(p)) {
+            if (!host || !Number.isFinite(p) || p < 1 || p > 65535) {
                 toast('peer has an invalid address', 'error');
                 return;
             }

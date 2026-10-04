@@ -167,6 +167,9 @@ def require_login():
     # covers program edit/delete — by design: whoever holds the
     # shared secret is a peer admin on both machines.
     # ("/programs" without trailing slash is the list route.)
+    # Covers list, per-service config, create/edit/delete, action,
+    # logs and log-wipe — by design: whoever holds the shared
+    # secret is a peer admin on both machines.
     if (request.path or "").startswith(("/api/", "/programs")):
         try:
             _cfg = pm.config_data if hasattr(pm, "config_data") else {}
